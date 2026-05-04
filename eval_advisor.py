@@ -91,7 +91,7 @@ scheduler = Scheduler(owner=owner)
 
 # Need to instantiate without hitting the real API
 import unittest.mock as mock
-with mock.patch("ai_advisor.anthropic.Anthropic"):
+with mock.patch("ai_advisor.OpenAI"):
     advisor = PetCareAdvisor(scheduler)
 
 empty_result = advisor._handle_tool("get_schedule", {})

@@ -212,21 +212,45 @@ def test_advisor_unknown_tool():
 # ---------------------------------------------------------------------------
 
 def _mock_text_response(text: str):
-    """Build a minimal mock Claude response that looks like a final text reply."""
-    block = MagicMock()
-    block.type = "text"
-    block.text = text
+    """Build a minimal mock OpenAI-style response that looks like a final text reply."""
+    message = MagicMock()
+    message.content = text
+    message.tool_calls = None
+
+    choice = MagicMock()
+    choice.finish_reason = "stop"
+    choice.message = message
+
     response = MagicMock()
-    response.stop_reason = "end_turn"
-    response.content = [block]
+    response.choices = [choice]
+    return response
+
+
+def _mock_tool_response(tool_name: str, tool_args: str = "{}"):
+    """Build a mock OpenAI-style response that triggers a tool call."""
+    tool_call = MagicMock()
+    tool_call.id = "call_001"
+    tool_call.function.name = tool_name
+    tool_call.function.arguments = tool_args
+
+    message = MagicMock()
+    message.content = None
+    message.tool_calls = [tool_call]
+
+    choice = MagicMock()
+    choice.finish_reason = "tool_calls"
+    choice.message = message
+
+    response = MagicMock()
+    response.choices = [choice]
     return response
 
 
 def test_advisor_chat_returns_non_empty_string():
     scheduler, pet = make_scheduler()
-    with patch("ai_advisor.anthropic.Anthropic") as MockClient:
+    with patch("ai_advisor.OpenAI") as MockClient:
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_text_response(
+        mock_client.chat.completions.create.return_value = _mock_text_response(
             "Rex needs feeding twice a day."
         )
         MockClient.return_value = mock_client
@@ -240,9 +264,9 @@ def test_advisor_chat_returns_non_empty_string():
 
 def test_advisor_chat_history_grows():
     scheduler, pet = make_scheduler()
-    with patch("ai_advisor.anthropic.Anthropic") as MockClient:
+    with patch("ai_advisor.OpenAI") as MockClient:
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_text_response("Good question!")
+        mock_client.chat.completions.create.return_value = _mock_text_response("Good question!")
         MockClient.return_value = mock_client
 
         advisor = PetCareAdvisor(scheduler)
@@ -254,9 +278,9 @@ def test_advisor_chat_history_grows():
 
 def test_advisor_reset_clears_history():
     scheduler, _ = make_scheduler()
-    with patch("ai_advisor.anthropic.Anthropic") as MockClient:
+    with patch("ai_advisor.OpenAI") as MockClient:
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_text_response("Sure!")
+        mock_client.chat.completions.create.return_value = _mock_text_response("Sure!")
         MockClient.return_value = mock_client
 
         advisor = PetCareAdvisor(scheduler)
@@ -270,26 +294,17 @@ def test_advisor_handles_tool_use_then_text():
     scheduler, pet = make_scheduler()
     scheduler.add_task("Feeding", pet.name, "Feeding", 10, 1)
 
-    tool_block = MagicMock()
-    tool_block.type = "tool_use"
-    tool_block.name = "get_schedule"
-    tool_block.input = {}
-    tool_block.id = "tool_001"
-
-    tool_response = MagicMock()
-    tool_response.stop_reason = "tool_use"
-    tool_response.content = [tool_block]
-
+    tool_response = _mock_tool_response("get_schedule", "{}")
     final_response = _mock_text_response("Your schedule looks good!")
 
-    with patch("ai_advisor.anthropic.Anthropic") as MockClient:
+    with patch("ai_advisor.OpenAI") as MockClient:
         mock_client = MagicMock()
-        mock_client.messages.create.side_effect = [tool_response, final_response]
+        mock_client.chat.completions.create.side_effect = [tool_response, final_response]
         MockClient.return_value = mock_client
 
         advisor = PetCareAdvisor(scheduler)
         reply = advisor.chat("What's on the schedule?")
 
     assert reply == "Your schedule looks good!"
-    # Claude was called twice: once returning tool_use, once returning text
-    assert mock_client.messages.create.call_count == 2
+    # Called twice: once returning tool_calls, once returning text
+    assert mock_client.chat.completions.create.call_count == 2

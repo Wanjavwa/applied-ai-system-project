@@ -177,11 +177,11 @@ with right:
         "and can add tasks directly."
     )
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
         st.warning(
-            "Set the `ANTHROPIC_API_KEY` environment variable to enable the AI advisor. "
-            "Run: `$env:ANTHROPIC_API_KEY='your-key'` in PowerShell, then restart."
+            "Set the `OPENROUTER_API_KEY` environment variable to enable the AI advisor. "
+            "Run: `$env:OPENROUTER_API_KEY='your-key'` in PowerShell, then restart."
         )
     elif not st.session_state.owner.pets:
         st.info("Add at least one pet on the left to start chatting.")

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 from typing import Optional
 
-import anthropic
-
-_CONFIDENCE_RE = re.compile(r"\n+Confidence:\s*(.+?)$", re.IGNORECASE | re.MULTILINE)
+from openai import OpenAI
 
 from pawpal_system import Scheduler
 
 logger = logging.getLogger(__name__)
+
+_CONFIDENCE_RE = re.compile(r"\n+Confidence:\s*(.+?)$", re.IGNORECASE | re.MULTILINE)
+
+# OpenRouter model — change this if you want a different Claude model
+# Other options: "anthropic/claude-3-haiku", "anthropic/claude-3.5-sonnet"
+OPENROUTER_MODEL = "anthropic/claude-3.5-haiku"
 
 # ---------------------------------------------------------------------------
 # Knowledge base (RAG source)
@@ -101,37 +107,43 @@ def retrieve_care_context(pets) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool definitions for Claude
+# Tool definitions (OpenAI function-calling format)
 # ---------------------------------------------------------------------------
 
 _TOOLS = [
     {
-        "name": "get_schedule",
-        "description": (
-            "Return all current pet care tasks with their status, timing, and priority. "
-            "Always call this before recommending new tasks to avoid duplicates."
-        ),
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "type": "function",
+        "function": {
+            "name": "get_schedule",
+            "description": (
+                "Return all current pet care tasks with their status, timing, and priority. "
+                "Always call this before recommending new tasks to avoid duplicates."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
     },
     {
-        "name": "add_task",
-        "description": "Add a new care task to the schedule for a specific pet.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string", "description": "Short task title"},
-                "pet_name": {"type": "string", "description": "Exact name of the pet"},
-                "category": {
-                    "type": "string",
-                    "description": "One of: Feeding, Walk, Grooming, Health, Play, Other",
+        "type": "function",
+        "function": {
+            "name": "add_task",
+            "description": "Add a new care task to the schedule for a specific pet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short task title"},
+                    "pet_name": {"type": "string", "description": "Exact name of the pet"},
+                    "category": {
+                        "type": "string",
+                        "description": "One of: Feeding, Walk, Grooming, Health, Play, Other",
+                    },
+                    "duration_minutes": {"type": "integer", "description": "Estimated duration in minutes"},
+                    "priority": {
+                        "type": "integer",
+                        "description": "1 = high, 2 = medium, 3 = low",
+                    },
                 },
-                "duration_minutes": {"type": "integer", "description": "Estimated duration in minutes"},
-                "priority": {
-                    "type": "integer",
-                    "description": "1 = high, 2 = medium, 3 = low",
-                },
+                "required": ["title", "pet_name", "category", "duration_minutes", "priority"],
             },
-            "required": ["title", "pet_name", "category", "duration_minutes", "priority"],
         },
     },
 ]
@@ -142,14 +154,24 @@ _TOOLS = [
 # ---------------------------------------------------------------------------
 
 class PetCareAdvisor:
-    """Claude-powered advisor with RAG (knowledge base retrieval) and agentic tool use."""
+    """Claude-powered advisor via OpenRouter — RAG retrieval + agentic tool use."""
 
     def __init__(self, scheduler: Scheduler):
         self.scheduler = scheduler
-        self.client = anthropic.Anthropic()
+        self._client: Optional[OpenAI] = None
         self._history: list[dict] = []
         self.last_confidence: str = "N/A"
         logger.info("PetCareAdvisor initialised for owner '%s'", scheduler.owner.name)
+
+    @property
+    def client(self) -> OpenAI:
+        """Lazy client — only created when chat() is first called."""
+        if self._client is None:
+            self._client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.environ.get("OPENROUTER_API_KEY"),
+            )
+        return self._client
 
     def _handle_tool(self, name: str, inputs: dict) -> str:
         if name == "get_schedule":
@@ -195,7 +217,6 @@ class PetCareAdvisor:
         owner = self.scheduler.owner
         pets = owner.pets
 
-        # RAG: retrieve care guidelines relevant to this owner's pets
         care_context = retrieve_care_context(pets)
         pet_summary = (
             ", ".join(f"{p.name} ({p.species}, {p.age_years}yr)" for p in pets)
@@ -212,50 +233,65 @@ Pets: {pet_summary}
 -------------------------------------
 
 Use the retrieved guidelines above when giving advice. You have two tools:
-• get_schedule — inspect the live task list before making recommendations (always do this first).
-• add_task — add a task directly to the schedule when the user says yes.
+- get_schedule: inspect the live task list before making recommendations (always do this first).
+- add_task: add a task directly to the schedule when the user says yes.
 
 Keep replies short and specific. If you add a task, confirm what was added and its ID.
 
 After your main response, on a new line write exactly:
-Confidence: X/5 — [one short reason]
-where X is 1–5 based on how well the retrieved guidelines and schedule data support your answer (5 = fully supported, 1 = mostly uncertain)."""
+Confidence: X/5 - [one short reason]
+where X is 1-5 based on how well the retrieved guidelines and schedule data support your answer."""
 
         self._history.append({"role": "user", "content": user_message})
         logger.info("User: %s", user_message[:120])
 
-        # Copy history for this call; tool-call exchanges stay local to the turn
-        messages = list(self._history)
+        # Build messages with system prompt first, then conversation history
+        messages = [{"role": "system", "content": system_prompt}, *self._history]
 
-        # Agentic loop — keep going until Claude stops calling tools
+        # Agentic loop — keep going until the model stops calling tools
         while True:
-            response = self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+            response = self.client.chat.completions.create(
+                model=OPENROUTER_MODEL,
                 max_tokens=1024,
-                system=system_prompt,
-                tools=_TOOLS,
                 messages=messages,
+                tools=_TOOLS,
             )
-            logger.debug("Claude stop_reason=%s", response.stop_reason)
 
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result_text = self._handle_tool(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": tool_results})
+            choice = response.choices[0]
+            logger.debug("finish_reason=%s", choice.finish_reason)
+
+            if choice.finish_reason == "tool_calls":
+                tool_calls = choice.message.tool_calls
+
+                # Append assistant message (with tool_calls) to history
+                messages.append({
+                    "role": "assistant",
+                    "content": choice.message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+
+                # Execute each tool and append results
+                for tc in tool_calls:
+                    try:
+                        inputs = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        inputs = {}
+                    result_text = self._handle_tool(tc.function.name, inputs)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result_text,
+                    })
 
             else:
-                raw = next(
-                    (block.text for block in response.content if hasattr(block, "text")), ""
-                )
-                # Extract and strip the confidence line before storing/returning
+                raw = choice.message.content or ""
                 match = _CONFIDENCE_RE.search(raw)
                 if match:
                     self.last_confidence = match.group(1).strip()
@@ -263,6 +299,7 @@ where X is 1–5 based on how well the retrieved guidelines and schedule data su
                 else:
                     self.last_confidence = "N/A"
                     reply = raw.strip()
+
                 logger.info("Advisor (confidence=%s): %s", self.last_confidence, reply[:120])
                 self._history.append({"role": "assistant", "content": reply})
                 return reply
