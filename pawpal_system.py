@@ -1,7 +1,11 @@
 from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -97,6 +101,7 @@ class Scheduler:
         pet.add_task(task)
         self.tasks.append(task)
         self._next_task_id += 1
+        logger.info("Task #%d added: '%s' for %s (priority=%d)", task.id, title, pet_name, priority)
         return task
 
     def get_all_owner_tasks(self) -> List[Task]:
@@ -127,6 +132,7 @@ class Scheduler:
             return None
 
         task.mark_complete()
+        logger.info("Task #%d '%s' marked complete", task.id, task.title)
 
         if task.frequency in {"daily", "weekly"} and task.scheduled_time is not None:
             interval = timedelta(days=1 if task.frequency == "daily" else 7)
@@ -165,6 +171,8 @@ class Scheduler:
                 pets = ", ".join(f"{g.pet_name}:{g.title}" for g in group)
                 conflicts.append(f"Overlap: {when.strftime('%Y-%m-%d %H:%M')} has tasks for multiple pets: {pets}")
 
+        if conflicts:
+            logger.warning("%d scheduling conflict(s) detected", len(conflicts))
         return list(dict.fromkeys(conflicts))
 
     def get_tasks_for_date(self, target_date: date) -> List[Task]:
