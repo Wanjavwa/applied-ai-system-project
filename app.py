@@ -151,7 +151,7 @@ with left:
         conflicts = st.session_state.scheduler.detect_conflicts()
         for warning_msg in conflicts:
             st.warning(warning_msg)
-        plan = st.session_state.scheduler.sort_by_time(today)
+        plan = st.session_state.scheduler.generate_daily_plan(today)
         if plan:
             st.success(f"Schedule for {today}:")
             st.table([
