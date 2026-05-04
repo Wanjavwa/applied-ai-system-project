@@ -190,6 +190,8 @@ with right:
         for msg in st.session_state.chat_display:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                if msg["role"] == "assistant" and msg.get("confidence", "N/A") != "N/A":
+                    st.caption(f"Confidence: {msg['confidence']}")
 
         user_input = st.chat_input("Ask the advisor anything about your pets...")
 
@@ -204,11 +206,17 @@ with right:
                 with st.spinner("Thinking..."):
                     try:
                         reply = advisor.chat(user_input)
+                        confidence = advisor.last_confidence
                     except Exception as exc:
                         reply = f"Sorry, something went wrong: {exc}"
+                        confidence = "N/A"
                         logger.error("Advisor error: %s", exc)
                 st.markdown(reply)
-            st.session_state.chat_display.append({"role": "assistant", "content": reply})
+                if confidence != "N/A":
+                    st.caption(f"Confidence: {confidence}")
+            st.session_state.chat_display.append(
+                {"role": "assistant", "content": reply, "confidence": confidence}
+            )
             st.rerun()
 
         if st.session_state.chat_display:

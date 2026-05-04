@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import anthropic
+
+_CONFIDENCE_RE = re.compile(r"\n+Confidence:\s*(.+?)$", re.IGNORECASE | re.MULTILINE)
 
 from pawpal_system import Scheduler
 
@@ -145,6 +148,7 @@ class PetCareAdvisor:
         self.scheduler = scheduler
         self.client = anthropic.Anthropic()
         self._history: list[dict] = []
+        self.last_confidence: str = "N/A"
         logger.info("PetCareAdvisor initialised for owner '%s'", scheduler.owner.name)
 
     def _handle_tool(self, name: str, inputs: dict) -> str:
@@ -211,7 +215,11 @@ Use the retrieved guidelines above when giving advice. You have two tools:
 • get_schedule — inspect the live task list before making recommendations (always do this first).
 • add_task — add a task directly to the schedule when the user says yes.
 
-Keep replies short and specific. If you add a task, confirm what was added and its ID."""
+Keep replies short and specific. If you add a task, confirm what was added and its ID.
+
+After your main response, on a new line write exactly:
+Confidence: X/5 — [one short reason]
+where X is 1–5 based on how well the retrieved guidelines and schedule data support your answer (5 = fully supported, 1 = mostly uncertain)."""
 
         self._history.append({"role": "user", "content": user_message})
         logger.info("User: %s", user_message[:120])
@@ -244,11 +252,19 @@ Keep replies short and specific. If you add a task, confirm what was added and i
                 messages.append({"role": "user", "content": tool_results})
 
             else:
-                reply = next(
+                raw = next(
                     (block.text for block in response.content if hasattr(block, "text")), ""
                 )
+                # Extract and strip the confidence line before storing/returning
+                match = _CONFIDENCE_RE.search(raw)
+                if match:
+                    self.last_confidence = match.group(1).strip()
+                    reply = raw[: match.start()].strip()
+                else:
+                    self.last_confidence = "N/A"
+                    reply = raw.strip()
+                logger.info("Advisor (confidence=%s): %s", self.last_confidence, reply[:120])
                 self._history.append({"role": "assistant", "content": reply})
-                logger.info("Advisor: %s", reply[:120])
                 return reply
 
     def reset(self) -> None:

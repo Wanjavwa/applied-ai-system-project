@@ -185,22 +185,61 @@ Without tools, the AI can only advise — the owner would have to manually add e
 
 ---
 
-## Testing Summary
+## Reliability and Evaluation
 
-**22 tests across four categories:**
+The system uses four complementary approaches to verify that the AI works correctly, not just seems to.
 
-| Category | Tests | What's covered |
+### 1. Automated unit tests (pytest)
+
+22 tests, 0 failures across all runs. No API key required — Claude calls are fully mocked.
+
+| Category | Tests | What's verified |
 |---|---|---|
 | Scheduler unit tests | 7 | Task lifecycle, conflict detection, recurring tasks, filtering, error handling |
-| RAG retrieval tests | 6 | Correct guideline retrieval by species/age, unknown species gracefully returns empty, multiple pets |
-| Tool handling tests | 4 | `get_schedule` with and without tasks, `add_task` success and error cases, unknown tool name |
-| Reliability tests (mocked) | 5 | End-to-end chat returns non-empty string, history grows correctly, reset clears history, agentic tool-call loop runs to completion |
+| RAG retrieval tests | 6 | Correct guideline retrieval by species/age, unknown species returns empty, multi-pet context |
+| Tool handling tests | 4 | `get_schedule` with/without tasks, `add_task` success and error cases, unknown tool name |
+| Reliability tests (mocked) | 5 | End-to-end chat returns text, history grows correctly, reset clears history, full tool-call loop simulated |
 
-**What worked well:** Separating the tool handler (`_handle_tool`) from the API loop made unit testing possible without any mocking. The scheduler logic was also independently testable, which caught a `timedelta` import issue early.
+Run with: `python -m pytest tests/ -v`
 
-**What was harder than expected:** Testing the agentic loop required simulating a `tool_use` response followed by a `end_turn` response from two different `side_effect` returns — getting the mock structure right for the Anthropic SDK's content block objects took iteration.
+### 2. Deterministic evaluation script
 
-**What would be tested next with more time:** Multi-turn conversation coherence (does the advisor remember context across turns?), edge cases where the owner has no pets registered, and rate-limit handling.
+`eval_advisor.py` runs 15 structured checks across three categories without any API calls, producing a pass/fail report with reasons on failure.
+
+```
+Results: 15/15 checks passed -- all checks passed
+
+  RAG retrieval:      6/6 passed
+  Tool reliability:   5/5 passed
+  Confidence parsing: 4/4 passed
+```
+
+Run with: `python eval_advisor.py`
+
+### 3. Confidence scoring
+
+Every AI response includes a self-assessed confidence rating that Claude appends based on how well the retrieved guidelines and schedule data support its answer. The format is:
+
+```
+Confidence: 4/5 — retrieved adult dog feeding guidelines directly support this recommendation.
+```
+
+This rating is stripped from the visible reply and displayed as a caption below each message in the UI. It is also logged to `pawpal.log`, making it possible to spot responses where the AI was uncertain (score ≤ 2) and investigate why.
+
+### 4. Structured logging
+
+All meaningful events write to `pawpal.log` with timestamps and severity levels:
+
+```
+2026-05-04 12:01:03 [INFO] ai_advisor: RAG retrieved 843 chars for 2 pet(s)
+2026-05-04 12:01:05 [INFO] ai_advisor: Tool get_schedule returned 3 task(s)
+2026-05-04 12:01:06 [INFO] ai_advisor: Advisor (confidence=5/5): Rex needs feeding twice...
+2026-05-04 12:01:06 [WARNING] pawpal_system: 1 scheduling conflict(s) detected
+```
+
+### Testing summary
+
+**22/22 unit tests passed. 15/15 eval checks passed.** The AI's self-reported confidence averaged 4–5/5 on questions with species-specific knowledge base entries, and dropped to N/A only when no pets were registered. The main gap identified: multi-turn coherence is not yet evaluated — the advisor maintains history but there are no tests that verify it uses earlier context correctly across three or more turns. That is the next evaluation milestone.
 
 ---
 
@@ -224,6 +263,7 @@ applied-ai-system-project/
 ├── ai_advisor.py           # RAG retriever, PetCareAdvisor, tool handler
 ├── pawpal_system.py        # Domain model: Owner, Pet, Task, Scheduler
 ├── main.py                 # CLI demo script
+├── eval_advisor.py         # Deterministic eval script (15 checks, no API key needed)
 ├── requirements.txt        # anthropic, streamlit, pytest
 ├── pawpal.log              # Runtime log (generated on first run)
 ├── assets/
