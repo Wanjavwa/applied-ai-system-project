@@ -321,6 +321,16 @@ applied-ai-system-project/
 
 | Package | Version | Purpose |
 |---|---|---|
-| `anthropic` | ≥ 0.40 | Claude Haiku API — AI advisor |
+| `openai` | ≥ 1.30 | OpenRouter-compatible client — AI advisor |
 | `streamlit` | ≥ 1.30 | Web UI framework |
 | `pytest` | ≥ 7.0 | Test runner |
+
+---
+
+## Portfolio
+
+**GitHub:** [https://github.com/Wanjavwa/applied-ai-system-project](https://github.com/Wanjavwa/applied-ai-system-project)
+
+### What this project says about me as an AI engineer
+
+This project shows that I approach AI engineering as a systems problem, not just a prompting problem. Rather than wrapping a model call in a chatbot, I designed a layered system where each component has a clear responsibility: the knowledge base owns the domain facts, the RAG retriever decides what context is relevant, the scheduler owns the state, and Claude handles only the reasoning and language. That separation meant every layer could be tested independently without touching the API, which is why 22 of the 22 tests run with no network calls at all. I also take reliability seriously as something you measure, not assume — the confidence scoring, structured logging, and deterministic eval script all exist because I wanted to know precisely where the system was certain and where it was guessing. What I find most compelling about building with AI is the design question it forces you to answer: not "can the model do this?" but "what should the model be responsible for, and what should the code handle?" Getting that boundary right is, I think, the core skill of applied AI engineering, and this project is my first serious attempt at drawing it deliberately.
