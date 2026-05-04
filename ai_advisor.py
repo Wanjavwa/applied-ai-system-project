@@ -156,8 +156,9 @@ _TOOLS = [
 class PetCareAdvisor:
     """Claude-powered advisor via OpenRouter — RAG retrieval + agentic tool use."""
 
-    def __init__(self, scheduler: Scheduler):
+    def __init__(self, scheduler: Scheduler, api_key: Optional[str] = None):
         self.scheduler = scheduler
+        self._api_key = (api_key or os.environ.get("OPENROUTER_API_KEY", "")).strip()
         self._client: Optional[OpenAI] = None
         self._history: list[dict] = []
         self.last_confidence: str = "N/A"
@@ -169,7 +170,7 @@ class PetCareAdvisor:
         if self._client is None:
             self._client = OpenAI(
                 base_url="https://openrouter.ai/api/v1",
-                api_key=os.environ.get("OPENROUTER_API_KEY"),
+                api_key=self._api_key,
             )
         return self._client
 

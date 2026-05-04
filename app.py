@@ -40,10 +40,10 @@ if "chat_display" not in st.session_state:
     st.session_state.chat_display = []  # list of {"role": ..., "content": ...}
 
 
-def get_or_create_advisor() -> PetCareAdvisor:
+def get_or_create_advisor(api_key: str) -> PetCareAdvisor:
     """Return the advisor, creating it (or recreating it) as needed."""
     if st.session_state.advisor is None:
-        st.session_state.advisor = PetCareAdvisor(st.session_state.scheduler)
+        st.session_state.advisor = PetCareAdvisor(st.session_state.scheduler, api_key=api_key)
     return st.session_state.advisor
 
 
@@ -177,11 +177,16 @@ with right:
         "and can add tasks directly."
     )
 
-    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         st.warning(
             "Set the `OPENROUTER_API_KEY` environment variable to enable the AI advisor. "
             "Run: `$env:OPENROUTER_API_KEY='your-key'` in PowerShell, then restart."
+        )
+    elif not api_key.startswith("sk-or-"):
+        st.error(
+            f"Key loaded but looks wrong (starts with `{api_key[:8]}...`). "
+            "OpenRouter keys start with `sk-or-`. Double-check you copied the right key."
         )
     elif not st.session_state.owner.pets:
         st.info("Add at least one pet on the left to start chatting.")
@@ -201,7 +206,7 @@ with right:
             with st.chat_message("user"):
                 st.markdown(user_input)
 
-            advisor = get_or_create_advisor()
+            advisor = get_or_create_advisor(api_key)
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
