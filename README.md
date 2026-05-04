@@ -243,15 +243,57 @@ All meaningful events write to `pawpal.log` with timestamps and severity levels:
 
 ---
 
-## Reflection
+## Reflection and Ethics
 
-Building PawPal+ taught me that the interesting engineering in AI systems is not the model call itself — it's everything around it: what context you retrieve, how you structure tools, what you log, and how you verify behavior without calling a live API in tests.
+### Limitations and biases in this system
 
-The RAG layer was the most clarifying decision. It forced me to think explicitly about what the model needs to know versus what it already knows, and it made the knowledge base a concrete, inspectable artifact rather than invisible prompt text. When something goes wrong, I can look at the retrieved context and trace exactly why the model responded the way it did.
+**The knowledge base reflects a narrow slice of reality.** `CARE_KNOWLEDGE_BASE` covers only dogs and cats, using generalised guidelines written for average healthy animals. It has no entries for rabbits, birds, reptiles, or fish, and it cannot account for breed-specific needs (a Border Collie needs far more exercise than a Bulldog), medical conditions, or geographic context (heartworm prevention is critical in some regions, irrelevant in others). A user who trusts the AI's advice for a pet outside this narrow profile will receive silence or a generic fallback — not a warning that the system doesn't know.
 
-The agentic tool loop was the most surprising to implement. The model alternates between "thinking" and "acting" across multiple API calls, and the loop has to be managed explicitly in code. That made the non-determinism concrete — the model might call one tool, two tools, or none, and the code has to handle all three cases. Writing a test that simulated a full tool-call cycle before the final response was the moment I understood what "agentic" actually means at the code level.
+**Age thresholds are fixed and arbitrary.** The system classifies a dog as "senior" at exactly 7 years. That cutoff was borrowed from a common veterinary rule of thumb, but it does not account for size (giant breeds age faster, small breeds slower). A 7-year-old Great Dane and a 7-year-old Chihuahua are in very different life stages, yet the system treats them identically.
 
-The biggest open question this project leaves me with: how do you evaluate whether an AI system is giving good advice, not just syntactically correct responses? The reliability tests confirm the system behaves consistently, but they do not verify that the advice is medically sound. That gap — between behavioral consistency and factual correctness — is where responsible AI development gets genuinely hard.
+**Confidence scores are self-assessed, not verified.** When Claude reports "Confidence: 5/5," that score reflects the model's internal sense of certainty given the retrieved context — not an independent measure of factual accuracy. A confidently wrong answer looks identical to a confidently correct one in the UI. High confidence should be read as "the retrieved guidelines clearly apply," not as "this advice is medically validated."
+
+**The knowledge base was written by a person and reviewed by no one.** Every guideline in `CARE_KNOWLEDGE_BASE` was authored as part of this project. It has not been reviewed by a veterinarian. For a production system giving health or dietary advice, professional review and citation of sources would be mandatory.
+
+---
+
+### Could this system be misused?
+
+**The realistic risk is over-reliance, not malice.** A pet care scheduler is not a high-stakes domain compared to medical or financial AI, but the risks are real:
+
+- An owner might follow an AI-generated feeding schedule for a pet with a condition (diabetes, kidney disease, allergies) that requires a completely different approach. The system has no mechanism to ask about health history.
+- The `add_task` tool writes to the schedule without any confirmation step beyond the conversational flow. If a user says "just set up everything Rex needs," the AI could add tasks the owner does not review carefully.
+- A user who sees "Confidence: 5/5" may treat the response as authoritative and skip consulting a vet.
+
+**Prevention measures built into this system:**
+- The UI warns clearly when no API key is set rather than silently failing
+- The `add_task` tool validates the pet name before writing, preventing phantom tasks
+- Error states are logged and surfaced rather than swallowed silently
+- The README and UI copy do not claim veterinary authority
+
+**What a production version would need:** a disclaimer that advice is not a substitute for veterinary care, health-history input fields that the AI can retrieve via RAG before responding, and a hard guardrail that escalates any symptom-related question to "please contact your vet."
+
+---
+
+### What surprised me during reliability testing
+
+The confidence scoring was more revealing than expected. The format "Confidence: X/5 — [reason]" was included in the system prompt as an instruction, but Claude interpreted "reason" very differently across turns. Sometimes it cited the specific guideline retrieved ("adult dog feeding guidelines support twice-daily feeding"); other times it cited the schedule data ("confirmed no existing feeding tasks"); occasionally it wrote vague phrases like "based on available information." This inconsistency is invisible to the automated tests because they mock the response — it only appeared during live testing. It showed that even a simple structured output instruction produces varied formats that a regex can handle but that a human reviewer would rightly question.
+
+The second surprise was how well the agentic loop handled the edge case of an empty schedule. When asked "what should Rex be doing today?" with no tasks at all, Claude reliably called `get_schedule`, received "No tasks currently in the schedule," and responded with concrete suggestions drawn from the retrieved guidelines rather than confabulating a schedule that didn't exist. That grounding behaviour — using tool results to constrain generation — was more robust than I anticipated.
+
+---
+
+### AI collaboration during this project
+
+**Helpful instance:** When designing the reliability tests for the agentic loop, I needed to simulate Claude making a tool call and then returning a final text response across two separate API calls. The approach of passing a list to `mock.side_effect` — so the first call returns a `tool_use` response and the second returns a text response — was suggested by Claude Code and worked immediately. Without that pattern, I would have written a more complex stateful mock class. The suggestion was precise, used the correct unittest.mock API, and matched the exact structure of the Anthropic SDK's response objects.
+
+**Flawed instance:** The first version of `eval_advisor.py` used Unicode box-drawing characters (`─`, `✓`, `✗`) in its print statements. On Windows, the default console encoding (cp1252) cannot encode those characters, so the script crashed with a `UnicodeEncodeError` before running a single check. Claude Code generated the Unicode characters without any awareness of the target platform, and did not warn that this would fail on Windows terminals. The fix was straightforward (replace with ASCII `-`, `+`, `x`) but it was a real failure — the script was unusable until it was corrected. It illustrated a common AI blind spot: generating code that works on the developer's assumed platform (macOS/Linux UTF-8) while silently breaking on the user's actual platform.
+
+---
+
+### Key takeaway
+
+The most important thing this project taught me about AI systems is the difference between *behavioural correctness* and *factual correctness*. Every test in this repo verifies that the system behaves consistently — the right tool is called, the right fields are returned, the history grows as expected. None of it verifies that the advice is actually good for Rex. That gap is not a flaw in the testing approach; it reflects a genuine hard problem in applied AI. Closing it requires domain expertise, sourced data, and human review — not more unit tests. Knowing where your automated tests stop being meaningful is as important as writing them.
 
 ---
 
